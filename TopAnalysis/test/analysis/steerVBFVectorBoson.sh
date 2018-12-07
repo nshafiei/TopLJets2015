@@ -25,8 +25,8 @@ queue=workday
 #eosdir=/store/cmst3/group/top/RunIIReReco/${githash}
 githash=0c522df
 eosdir=/store/cmst3/group/top/RunIIReReco/2016/${githash}
-fulllumi=41367
-vbflumi=7661
+fulllumi=35967
+vbflumi=28200
 lumiUnc=0.025
 outdir=${CMSSW_BASE}/src/TopLJets2015/TopAnalysis/test/analysis/VBFVectorBoson2016
 wwwdir=~/www/VBFVectorBoson2016
@@ -39,7 +39,8 @@ case $WHAT in
     TESTSEL )
                
         json=data/era${era}/vbf_samples.json
-        tag=MC13TeV_2016_EWKAJJ
+        #tag=MC13TeV_2016_EWKAJJ
+	tag=MC13TeV_2016_GJets_HT200to400
         #tag=Data13TeV_2017B_DoubleEG
         input=${eosdir}/${tag}/Chunk_0_ext0.root
         output=${tag}.root 
