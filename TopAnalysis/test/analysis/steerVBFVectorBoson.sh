@@ -21,14 +21,14 @@ if [ "$#" -gt 2 ]; then
 fi
 #to run locally use local as queue + can add "--njobs 8" to use 8 parallel jobs
 queue=workday
-#githash=3129835
-#eosdir=/store/cmst3/group/top/RunIIReReco/${githash}
-githash=0c522df
-eosdir=/store/cmst3/group/top/RunIIReReco/2016/${githash}
-fulllumi=35967
-vbflumi=28200
+githash=3129835
+eosdir=/store/cmst3/group/top/RunIIReReco/${githash}
+#githash=0c522df
+#eosdir=/store/cmst3/group/top/RunIIReReco/2016/${githash}
+fulllumi=41367
+vbflumi=7661
 lumiUnc=0.025
-outdir=${CMSSW_BASE}/src/TopLJets2015/TopAnalysis/test/analysis/VBFVectorBoson2016
+outdir=${CMSSW_BASE}/src/TopLJets2015/TopAnalysis/test/analysis/VBFVectorBoson
 wwwdir=~/www/VBFVectorBoson2016
 era="2016"
 
