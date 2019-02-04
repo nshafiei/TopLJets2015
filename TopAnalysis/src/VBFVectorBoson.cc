@@ -971,10 +971,7 @@ void VBFVectorBoson::fillControlHistos(TLorentzVector boson, std::vector<Jet> je
     float j_rawpt   = jets[ij].pt()/ev_.j_rawsf[jets[ij].getJetIndex()];
     float j_emf     = ev_.j_emf[jets[ij].getJetIndex()];
     float j_rawempt = j_rawpt*j_emf;
-    leadeta=jets[0].Eta();
-    subleadeta=jets[1].Eta();
-    leadPt=jets[0].Pt();
-    subleadPt=jets[1].Pt();
+   
     ht_->fill("jet_emf"     , j_emf        ,cplotwgts,c);
     ht_->fill("jet_raw_pt" ,j_rawpt        , cplotwgts,c );
     ht_->fill("jet_raw_empt" ,j_rawempt        , cplotwgts,c );
@@ -1001,10 +998,10 @@ void VBFVectorBoson::fillControlHistos(TLorentzVector boson, std::vector<Jet> je
   ht_->fill("jjetas",       vbfVars_.jjetas,   cplotwgts,c);
   ht_->fill("dphivj0",      vbfVars_.dphivj0 ,  cplotwgts,c);
   ht_->fill("dphivj1",      vbfVars_.dphivj1 ,  cplotwgts,c);
-  ht_->fill("leadeta"     ,leadeta        ,cplotwgts,c);
-  ht_->fill("subleadeta"     ,subleadeta        ,cplotwgts,c);
-  ht_->fill("leadpt"     ,  leadPt        ,cplotwgts,c);
-  ht_->fill("subleadpt"     , subleadPt       ,cplotwgts,c);
+  ht_->fill("leadeta"     , vbfVars_.leadj_eta         ,cplotwgts,c);
+  ht_->fill("subleadeta"     ,vbfVars_.subleadj_eta         ,cplotwgts,c);
+  ht_->fill("leadpt"     ,   vbfVars_.leadj_pt        ,cplotwgts,c);
+  ht_->fill("subleadpt"     ,  vbfVars_.subleadj_pt       ,cplotwgts,c);
  
   //central jet activity
   ht_->fill("ncentj", vbfVars_.ncentj, cplotwgts, c);
