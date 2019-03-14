@@ -7,11 +7,13 @@
 <use name="DataFormats/PatCandidates"/>
 <use name="DataFormats/CTPPSReco"/>
 <use name="DataFormats/CTPPSDetId"/>
+<use name="DataFormats/ProtonReco"/>
 <use name="DataFormats/Math"/>
 <use name="DataFormats/Common"/>
 <use name="CommonTools/UtilAlgos"/>
 <use name="EgammaAnalysis/ElectronTools"/>
 <use name="SimDataFormats/PileupSummaryInfo"/>
+<use name="TopQuarkAnalysis/BFragmentationAnalyzer"/>
 <use name="TopLJets2015/TopAnalysis"/>
 <use name="clhep"/>
 <use name="root"/>

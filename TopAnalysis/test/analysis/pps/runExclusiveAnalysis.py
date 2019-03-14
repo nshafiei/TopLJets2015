@@ -1,6 +1,6 @@
-
 #! /usr/bin/env python
 import ROOT
+import copy
 import optparse
 import json
 import sys
@@ -10,7 +10,14 @@ import array
 import json
 import random
 import pickle
+import array
+import re
+from random import shuffle
 from collections import OrderedDict
+from TopLJets2015.TopAnalysis.HistoTool import *
+from mixedEvent import *
+
+VALIDLHCXANGLES=[120,130,140,150]
 
 def isValidRunLumi(run,lumi,runLumiList):
 
@@ -31,27 +38,31 @@ def isValidRunLumi(run,lumi,runLumiList):
     #reached this far, nothing found in list
     return True
 
-def getTracksPerRomanPot(tree):
+def getTracksPerRomanPot(tree,mcTruth=False,usefarRP=True):
 
     """loops over the availabe tracks in the event and groups them by roman pot id"""
 
     tkPos=[]
     tkNeg=[]
-    try:
-        for itk in xrange(0,tree.nRPtk):
-            rpid=tree.RPid[itk]
-            csi=tree.RPfarcsi[itk]
-            if rpid==23  : tkPos.append(csi)
-            if rpid==123 : tkNeg.append(csi)
-    except:
-        pass
-
+    for itk in xrange(0,tree.nRPtk):
+        rpid=tree.RPid[itk]
+        try:
+            csi=tree.RPfarcsi[itk] if usefarRP else tree.RPnearcsi[itk]
+        except:            
+            if notMCTruth:
+                csi=tree.RPfarx[itk] if useFarRP else tree.RPnearx[itk]
+            else:
+                csi=tree.RPtruecsi[itk] 
+        if rpid==23  : tkPos.append(csi)
+        if rpid==123 : tkNeg.append(csi)
+        
     return (tkPos,tkNeg)
 
 def buildDiproton(rptks,sqrts=13000.):
 
     """build a diproton system from to tracks in the arms of the roman pots"""
 
+    if not rptks : return None
     if len(rptks[0])==0 or len(rptks[1])==0 : return None
     beamP=0.5*sqrts
     csiL,csiR=rptks[0][0],rptks[1][0]
@@ -69,177 +80,361 @@ def getRandomEra():
     elif r<0.671 : return '2017E'
     return '2017F'
 
-
-def createEventMixBank(fileList,outdir,runLumiList):
-    
-    """build a list of events for the mixing"""
-
-    print '... @ createEventMixBank'
-
-    rpData={}
-    for tag in fileList:        
-        rpData[tag]=[]
-        tree=ROOT.TChain('tree')
-        for f in fileList[tag]: tree.AddFile(f)        
-        nEntries=tree.GetEntries()
-
-        print 'Starting',tag,'with',nEntries
-        for i in xrange(0,nEntries):
-            if i%1000==0 : sys.stdout.write('\r [ %d/100 ] done' %(int(float(100.*i)/float(nEntries))))
-            tree.GetEntry(i)
-            if not isValidRunLumi(tree.run,tree.lumi,runLumiList): continue
-            tkPos,tkNeg=getTracksPerRomanPot(tree)
-            rpData[tag].append( (tree.beamXangle,tkPos,tkNeg) )
-
-        random.shuffle(rpData[tag])
-
-    with open(os.path.join(outdir,'evmix.pck'),'w') as cachefile:
-        pickle.dump(rpData,cachefile, pickle.HIGHEST_PROTOCOL)
-
-
-def runExclusiveAnalysis(inFile,outFileName,runLumiList,mixFile,mixSel):
+def runExclusiveAnalysis(inFile,outFileName,runLumiList,mixFile):
     
     """event loop"""
 
-    tree=ROOT.TChain('tree')
-    tree.AddFile(inFile)
-    nEntries=tree.GetEntries()  
-
-    with open(mixFile,'r') as cachefile:
-        mixedRP=pickle.load(cachefile)
-
-    #start histograms
-    histos={}
-    histos['nvtx']        = {'inc':ROOT.TH1F('nvtx',';Vertex multiplicity;Events',50,0,100)}
-    histos['mll']         = {'inc':ROOT.TH1F('mll',';Dilepton invariant mass [GeV];Events',50,20,250)}
-    histos['ptll']        = {'inc':ROOT.TH1F('ptll',';Dilepton transverse momentum [GeV];Events',50,0,250)}
-    histos['xangle']      = {'inc':ROOT.TH1F('xangle',';LHC crossing angle [#murad];Events',4,120,160)}
-    histos['xanglevsnvtx']= {'inc':ROOT.TH2F('xanglevsnvtx',';LHC crossing angle [#murad];Vertex multiplicity;Events',4,120,160,5,0,100)}
-    histos['mpp']         = {'inc':ROOT.TH1F('mpp',';Di-proton invariant mass [GeV];Events',100,0,2000)}
-    histos['mmass']       = {'inc':ROOT.TH1F('mmass',';Missing mass [GeV];Events',100,0,2000)}
-    histos['mmassvsnvtx'] = {'inc':ROOT.TH2F('mmassvsnvtx',';Missing mass [GeV];Vertex multiplicity;Events',100,0,2000,5,0,100)}
-    histos['ntk']         = {'inc':ROOT.TH1F('ntk',';Track multiplicity;Events',5,0,5)}
-    histos['csi']         = {'inc':ROOT.TH1F('csi',';#xi;Events',50,0,0.3)}
-    for name in histos:
-        for cat in histos[name]:
-            histos[name][cat].SetDirectory(0)
-            histos[name][cat].Sumw2()
-            
-    def fillHisto(val,key):
-        name,cat=key
-        if not cat in histos[name]:
-            histos[name][cat]=histos[name]['inc'].Clone('%s_%s'%key)
-            histos[name][cat].SetDirectory(0)
-            histos[name][cat].Reset('ICE')
-        histos[name][cat].Fill(*val)
-        
-
-    print '....analysing',nEntries,'in',inFile,', with output @',outFileName
-    print '    events mixed with',mixSel if mixSel else 'lumi-weighted data','from',mixFile
     isData=True if 'Data' in inFile else False
+    isSignal=True if 'MC13TeV_2017_PPZX_' in inFile else False
 
-    #loop over events in the tree and fill histos
-    irand=0
+    #bind main tree with pileup discrimination tree, if failed return
+    tree=ROOT.TChain('analysis/data' if isSignal else 'tree')
+    tree.AddFile(inFile)
+    try:
+        pudiscr_tree=ROOT.TChain('pudiscr')
+        baseName=os.path.basename(inFile)
+        baseDir=os.path.dirname(inFile)
+        pudiscr_file=os.path.join(baseDir,'pudiscr',baseName)
+        if not os.path.isfile(pudiscr_file):
+            raise ValueError(pudiscr_file+' does not exist')
+        pudiscr_tree.AddFile(pudiscr_file)
+        tree.AddFriend(pudiscr_tree)
+        print 'Added pu tree for',inFile
+    except:
+        #print 'Failed to add pu discrimination tree as friend for',inFile
+        return
+
+
+    #identify data-taking era
+    era=None
+    if isData:
+        era=os.path.basename(inFile).split('_')[1]
+    
+    #check if it is signal and load     
+    signalPt=[]
+    mcEff={}
+    if isSignal: 
+        signalPt=[float(x) for x in re.findall(r'\d+', os.path.basename(inFile) )[2:]]
+        for ch in ['ee','mm']:
+            effIn=ROOT.TFile.Open('$CMSSW_BASE/src/TopLJets2015/TopAnalysis/plots/effsummary_%sz_ptboson.root'%ch)
+            mcEff[ch]=effIn.Get('gen%sz2trec_ptboson_ZH#rightarrowllbb_eff'%ch)
+            effIn.Close()
+
+    #filter events to mix according to tag if needed
+    mixedRP=None
+    try:
+        with open(mixFile,'r') as cachefile:
+            mixedRP=pickle.load(cachefile)
+    except:
+        pass
+    
+    #start histograms
+    ht=HistoTool()   
+
+    #main analysis histograms
+    ht.add(ROOT.TH1F('mll',';Dilepton invariant mass [GeV];Events',50,20,250))
+    ht.add(ROOT.TH1F('yll',';Dilepton rapidity;Events',50,0,5))
+    ht.add(ROOT.TH1F('ptll',';Dilepton transverse momentum [GeV];Events',50,0,250))
+    ht.add(ROOT.TH1F('l1eta',';Lepton pseudo-rapidiy;Events',50,0,2.5))
+    ht.add(ROOT.TH1F('l1pt',';Lepton transverse momentum [GeV];Events',50,0,250))
+    ht.add(ROOT.TH1F('l2eta',';Lepton pseudo-rapidiy;Events',50,0,2.5))
+    ht.add(ROOT.TH1F('l2pt',';Lepton transverse momentum [GeV];Events',50,0,250))
+    ht.add(ROOT.TH1F('acopl',';A=1-|#Delta#phi|/#pi;Events',50,0,1))
+    ht.add(ROOT.TH1F('xangle',';LHC crossing angle [#murad];Events',4,120,160))
+    ht.add(ROOT.TH1F('mpp',';Di-proton invariant mass [GeV];Events',50,0,3000))
+    ht.add(ROOT.TH1F('ypp',';Di-proton rapidity;Events',50,0,2))
+    ht.add(ROOT.TH1F('mmass',';Missing mass [GeV];Events',50,0,3000))
+    ht.add(ROOT.TH1F('ntk',';Track multiplicity;Events',5,0,5))
+    ht.add(ROOT.TH1F('csi',';#xi;Events',50,0,0.3))
+
+    #pileup control
+    ht.add(ROOT.TH1F('nvtx',';Vertex multiplicity;Events',50,0,100))
+    ht.add(ROOT.TH1F('rho',';Fastjet #rho;Events',50,0,30))
+    puVarRanges={'min':-4,'max':4,'delta':1,'nbins':16}
+    for puVar,puVarTitle in [('pfmult','PF multiplicity sum'), ('pfht','PF H_{T} sum'), ('pfpz','PF P_{z} sum'),
+                             ('chpfmult','Charged PF multiplicity sum'), ('chpfht','Charged PF H_{T} sum'), ('chpfpz','Charged PF P_{z} sum'),
+                             ('pfdiffmult','PF multiplicity diff'), ('pfdiffht','PF H_{T} diff'), ('pfdiffpz','PF P_{z} diff'),
+                             ('chpfdiffmult','Charged PF multiplicity diff'), ('chpfdiffht','Charged PF H_{T} diff'), ('chpfdiffpz','Charged PF P_{z} diff')]:
+
+        a=puVarRanges['min']
+        b=puVarRanges['min']+4*puVarRanges['delta']+5*(puVarRanges['max']-puVarRanges['min'])
+        ht.add(ROOT.TH1F(puVar,';Rapidity bin;log_{10}(%s)'%puVarTitle,int(2*(b-a)),a,b))
+        for i in range(0,4):
+            a=puVarRanges['min']+i*puVarRanges['delta']+i*(puVarRanges['max']-puVarRanges['min'])
+            b=a+(puVarRanges['max']-puVarRanges['min'])
+            ht.get(puVar).GetXaxis().SetBinLabel(ht.get(puVar).GetXaxis().FindBin(a),'%3.1f'%puVarRanges['min'])
+            ht.get(puVar).GetXaxis().SetBinLabel(ht.get(puVar).GetXaxis().FindBin(0.5*(a+b)),'%3.1f'%(0.5*(puVarRanges['max']+puVarRanges['min'])))
+            ht.get(puVar).GetXaxis().SetBinLabel(ht.get(puVar).GetXaxis().FindBin(b),'%3.1f'%puVarRanges['max'])
+    ht.add(ROOT.TH1F('met',';Missing transverse energy [GeV];Events',50,0,200))
+    ht.add(ROOT.TH1F('metbits',';MET filters;Events',124,0,124))
+    ht.add(ROOT.TH1F('njets',';Jet multiplicity;Events',5,0,5))
+    ht.add(ROOT.TH1F('nch', ';Charged particle multiplicity;Events',50,0,50))
+    ht.add(ROOT.TH1F('nextramu',';Additional muons ;Events',10,0,10))
+    ht.add(ROOT.TH1F('extramupt',';Additional muon p_{T} [GeV] ;Events',10,0,50))
+    ht.add(ROOT.TH1F('extramueta',';Additional muon pseudo-rapidty ;Events',10,0,2.5))
+        
+    nEntries=tree.GetEntries()          
+    print '....analysing',nEntries,'in',inFile,', with output @',outFileName
+    if mixedRP : print '    events mixed with',mixFile
+
+    #loop over events
+    rpData={}
+    selEvents=[]
+    summaryVars='cat:wgt:nvtx:nch:xangle:l1pt:l1eta:l2pt:l2eta:acopl:bosonpt:mpp:mmiss:mpp2:mmiss2'.split(':')
     for i in xrange(0,nEntries):
 
         tree.GetEntry(i)
-
-        if not isValidRunLumi(tree.run,tree.lumi,runLumiList): continue
         
         if i%1000==0 : sys.stdout.write('\r [ %d/100 ] done' %(int(float(100.*i)/float(nEntries))))
-        
-        if tree.isSS : continue
-        dilId=abs(int(tree.l1id*tree.l2id))
-        if dilId==11*11 : dilcat='ee'
-        if dilId==11*13 : dilcat='em'
-        if dilId==13*13 : dilcat='mm'
+    
+        #base event selection
+        if tree.evcat==11*11   : evcat='ee'
+        elif tree.evcat==11*13 : evcat='em'
+        elif tree.evcat==13*13 : evcat='mm'
+        elif tree.evcat==22 and tree.hasLowPtATrigger : evcat="lpta"
+        elif tree.evcat==22 and tree.hasHighPtATrigger : evcat="hpta"
+        else : continue
+        if tree.isSS : continue        
+        if isData and not isValidRunLumi(tree.run,tree.lumi,runLumiList): continue
 
         wgt=tree.evwgt
         nvtx=tree.nvtx
+        nch=tree.nchPV
+        rho=tree.rho
+        met=tree.met_pt
+        njets=0 if isSignal else tree.nj 
 
-        beamXangle=tree.beamXangle
-        rptks   = getTracksPerRomanPot(tree)
-        eraTag  = mixSel if mixSel else getRandomEra()
-        mixedEv = random.choice( mixedRP[eraTag] )
-        mixed_beamXangle=mixedEv[0]
-        mixed_rptks=(mixedEv[1],mixedEv[2])
+        #lepton specific
+        l1p4=ROOT.TLorentzVector(0,0,0,0)
+        l2p4=ROOT.TLorentzVector(0,0,0,0)        
+        acopl=0
+        if tree.evcat!=22:
+            acopl=1.0-abs(ROOT.TVector2.Phi_mpi_pi(tree.l1phi-tree.l2phi))/ROOT.TMath.Pi()
+            l1p4.SetPtEtaPhiM(tree.l1pt,tree.l1eta,tree.l1phi,tree.ml1)
+            l2p4.SetPtEtaPhiM(tree.l2pt,tree.l2eta,tree.l2phi,tree.ml2)
+            if l1p4.Pt()<l2p4.Pt(): l1p4,l2p4=l2p4,l1p4
+            if abs(l1p4.Eta())>2.1 : continue
 
-        #filter based on the beam crossing angle and high purity of the event
-        passBeamXangle = True if beamXangle in [120,130,140] else False
-        highPur=True if len(rptks[0])==1 and len(rptks[1])==1 else False        
-        mix_passBeamXangle = True if mixed_beamXangle in [120,130,140] else False
-        mix_highPur=True if len(mixed_rptks[0])==1 and len(mixed_rptks[1])==1 else False
-        
-        ll=ROOT.TLorentzVector(0,0,0,0)
-        ll.SetPtEtaPhiM(tree.llpt,tree.lleta,tree.llphi,tree.mll)
+        #boson kinematics
+        boson=ROOT.TLorentzVector(0,0,0,0)
+        boson.SetPtEtaPhiM(tree.bosonpt,tree.bosoneta,tree.bosonphi,tree.mboson)
+        isZ=tree.isZ
+        isA=tree.isA
+        isHighPt=(boson.Pt()>50)
 
-        pp=buildDiproton(rptks)
-        mixed_pp=buildDiproton(mixed_rptks)
+        #Nicola's initial discriminator
+        extra_muons=[]
+        for im in range(tree.nrawmu):
+            mup4=ROOT.TLorentzVector(0,0,0,0)
+            mup4.SetPtEtaPhiM(tree.rawmu_pt[im],tree.rawmu_eta[im]/10.,tree.rawmu_phi[im]/10.,0.105)
+            if mup4.DeltaR(l1p4)<0.05 : continue
+            if mup4.DeltaR(l2p4)<0.05 : continue
+            extra_muons.append( ROOT.TLorentzVector(mup4) )
+            
+        #proton tracks (standard and mixed)
+        rptks, near_rptks = None, None
+        beamXangle     = tree.beamXangle
+        if isSignal or isData: 
+            far_rptks  = getTracksPerRomanPot(tree)
+            near_rptks = getTracksPerRomanPot(tree,False,False)
 
-        mmass,mixed_mmass=0.,0.
-        if pp:        mmass=(ll-pp).M()
-        if mixed_pp : mixed_mmass=(ll-mixed_pp).M()
+        mixed_beamXangle = None
+        mixed_far_rptks      = None
+        mixed_far_1rptk      = None
+        if not isData:
+            evEra=getRandomEra()
+            #if not isSignal: beamXangle=getBeamXangle()
+        else:
+            evEra=era
+            if not mixedRP:
+                if isZ and tree.evcat==13*13 and tree.bosonpt<10:
+                    rfc=getattr(tree,'rfc_%d'%beamXangle) if beamXangle in VALIDLHCXANGLES else -1
+                    rpDataKey=(era,int(beamXangle))
+                    if not rpDataKey in rpData: rpData[rpDataKey]=[]
+                    rpData[rpDataKey].append( MixedEvent(beamXangle,
+                                                         [len(extra_muons),nvtx,rho,rfc],
+                                                         far_rptks,
+                                                         near_rptks
+                                                         ) )
+                continue
 
-        cats=[dilcat]
-        if tree.isZ                 : cats.append(dilcat+'Z')
-        if ll.Pt()>50               : cats.append(dilcat+'hpt')
-        if tree.isZ and ll.Pt()>50  : cats.append(dilcat+'hptZ')
-        #if highPur                  : cats += [x+'highpur' for x in cats]
-
-        blind=False
-        if tree.isZ and ll.Pt()>50:
-            if pp and (mmass>1000 and mmass<2000):
-                blind=True
+        try:
+            mixedEv=random.choice( mixedRP[(evEra,beamXangle)] )
+            mixed_far_rptks=mixedEv.far_rptks
+            if far_rptks and mixed_far_rptks:
+                if random.random()<0.5:
+                    mixed_far_1rptk = (mixed_far_rptks[0],far_rptks[1])
+                else:
+                    mixed_far_1rptk = (far_rptks[0],mixed_far_rptks[1])
+        except :
+            pass
 
         #fill histograms
-        for cat in cats:
-            
-            fillHisto(val=(nvtx,wgt),             key=('nvtx',cat))
-            fillHisto(val=(ll.M(),wgt),           key=('mll',cat))
-            fillHisto(val=(ll.Pt(),wgt),          key=('ptll',cat)) 
-       
-            fillHisto(val=(beamXangle,wgt),            key=('xangle',cat))
-            fillHisto(val=(beamXangle,nvtx,wgt),       key=('xanglevsnvtx',cat))
-            fillHisto(val=(mixed_beamXangle,wgt),      key=('xangle',cat+'_mix'))
-            fillHisto(val=(mixed_beamXangle,nvtx,wgt), key=('xanglevsnvtx',cat+'_mix'))
+        goldenSel=None
+        mon_tasks=[]
+        if isData:
+            mon_tasks.append( (rptks,beamXangle,'') )
+            mon_tasks.append( (mixed_1rptk,mixed_beamXangle,'_mix1') )
+            mon_tasks.append( (mixed_rptks,mixed_beamXangle,'_mix2') )
+        else:
+            if isSignal:
+                #embed pileup to signal
+                tksPos=mixed_rptks[0]+rptks[0]
+                shuffle(tksPos)
+                tksNeg=mixed_rptks[1]+rptks[1]
+                shuffle(tksNeg)
+                mixed_rptks=(tksPos,tksNeg)
+                mixed_beamXangle=beamXangle
+                mon_tasks.append( (rptks,beamXangle,'nopu') )
+            mon_tasks.append( (mixed_rptks,mixed_beamXangle,'') )
 
-            if pp and passBeamXangle:
-                if not (blind and 'hpt' in cat):
-                    fillHisto(val=(pp.M(),wgt),     key=('mpp',cat))
-                    fillHisto(val=(mmass,wgt),      key=('mmass',cat))
-                    fillHisto(val=(mmass,nvtx,wgt), key=('mmassvsnvtx',cat))
-                    
-                    for irp,rpside in [(0,'pos'),(1,'neg')]:
-                        fillHisto(val=(len(rptks[irp]),wgt), key=('ntk',cat+'_'+rpside))
-                        for csi in rptks[irp]:
-                            fillHisto(val=(csi,wgt), key=('csi',cat+'_'+rpside))
+        for protons, xangle, pfix in mon_tasks:
 
-            if mixed_pp and mix_passBeamXangle:
-                fillHisto(val=(mixed_pp.M(),wgt),     key=('mpp',cat+'_mix'))
-                fillHisto(val=(mixed_mmass,wgt),      key=('mmass',cat+'_mix'))
-                fillHisto(val=(mixed_mmass,nvtx,wgt), key=('mmassvsnvtx',cat+'_mix'))
+            #no calibration, not worth it...
+            if not xangle in VALIDLHCXANGLES: continue
+    
+            #high purity selection for proton tracks
+            highPur = True if protons and len(protons[0])==1 and len(protons[1])==1 else False  
+            if highPur:
+                if protons[0][0]<0.05 or protons[0][0]>0.20 : highPur=False
+                if protons[1][0]<0.05 or protons[1][0]>0.20 : highPur=False
+
+            #the famous cut
+            noExtraMu = True
+            if len(extra_muons)>1: noExtraMu=False
+
+            #check if Z and di-proton combination is consistent with elastic scattering
+            pp=buildDiproton(protons)
+            isElasticLike=False
+            mmass=0
+            if pp:
+                isElasticLike=(13000.-boson.E()-pp.E()>0)
+                inPP=ROOT.TLorentzVector(0,0,0,13000.)
+                if isElasticLike: 
+                    mmass=(pp-boson).M()
+
+            #categories to fill
+            cats=[]
+            cats.append(evcat)
+            if isZ              : cats.append(evcat+'Z')
+            if isHighPt         : cats.append(evcat+'hpt')
+            if isZ and isHighPt : cats.append(evcat+'hptZ')
+            if isElasticLike    :
+                ppCats=[c+'elpp' for c in cats]
+                if highPur: 
+                    ppCats+=[c+'elpphighPur' for c in cats]
+                if isZ:
+                    cats += ppCats + [c+'%d'%xangle for c in ppCats]
+            if noExtraMu:
+                extrmucats=[c+'noextramu' for c in cats]
+                cats += extrmucats
+            if nvtx<2 and len(protons[0])+len(protons[1])==1:
+                if (en_negRG==0 and en_posRG>0) or (en_negRG>0 and en_posRG==0):
+                    diffCats=[c+'diff' for c in cats]
+                    cats += diffCats
+
+            if len(pfix)!=0:
+                cats=[c for c in cats if 'elpp' in c]
+                
+            if (isData and 'mix' in pfix) or (isSignal and pfix==''):
+                if isZ and isElasticLike and highPur:
+                    if goldenSel:
+                        goldenSel += [pp.M(),mmass]
+                    else:
+                        goldenSel=[tree.evcat,wgt,nvtx,nch,xangle,l1p4.Pt(),l1p4.Eta(),l2p4.Pt(),l2p4.Eta(),acopl,boson.Pt(),pp.M(),mmass]
+
+            #final plots (for signal correct wgt by efficiency curve and duplicate for mm channel)
+            finalPlots=[[wgt,cats]]
+            if isSignal:
+                finalPlots=[ [wgt*mcEff['ee'].Eval(boson.Pt())/nEntries, cats],
+                             [wgt*mcEff['mm'].Eval(boson.Pt())/nEntries, [c.replace(evcat,'mm') for c in cats if c[0:2]=='ee']] ]
+
+            for pwgt,pcats in finalPlots:
+                
+                ht.fill((nvtx,pwgt),                  'nvtx',   pcats,pfix)
+                ht.fill((rho,pwgt),                   'rho',   pcats,pfix)
+                ht.fill((met,pwgt),                   'met',   pcats,pfix)
+                ht.fill((tree.metfilters,pwgt),       'metbits',   pcats,pfix)
+                ht.fill((njets,pwgt),                 'njets',  pcats,pfix)
+                ht.fill((nch,pwgt),                   'nch',    pcats,pfix)                                
+                ht.fill((l1p4.Pt(),pwgt),             'l1pt',   pcats,pfix)
+                ht.fill((l2p4.Pt(),pwgt),             'l2pt',   pcats,pfix)
+                ht.fill((abs(l1p4.Eta()),pwgt),       'l1eta',  pcats,pfix)
+                ht.fill((abs(l2p4.Eta()),pwgt),       'l2eta',  pcats,pfix)
+                ht.fill((acopl,pwgt),                 'acopl',  pcats,pfix) 
+                ht.fill((boson.M(),pwgt),             'mll',    pcats,pfix)
+                ht.fill((abs(boson.Rapidity()),pwgt), 'yll',    pcats,pfix)
+                ht.fill((boson.Pt(),pwgt),            'ptll',   pcats,pfix)
+                ht.fill((xangle,pwgt),                'xangle',    pcats,pfix)
+                ht.fill((min(en_posRG,en_negRG),pwgt),'minenfwd',    pcats,pfix)
+                ht.fill((max(en_posRG,en_negRG),pwgt),'maxenfwd',    pcats,pfix)                
+                ht.fill((abs(en_posRG-en_negRG),pwgt),'deltaenfwd',    pcats,pfix)                
+                sgnY=boson.Rapidity() if en_posRG<en_negRG else -boson.Rapidity()
+                ht.fill((sgnY,pwgt),   'sgny', pcats,pfix)
+                ht.fill((len(extra_muons),pwgt), 'nextramu', pcats, pfix)
+                for mp4 in extra_muons:
+                    ht.fill((mp4.Pt(),pwgt), 'extramupt', pcats,pfix)
+                    ht.fill((abs(mp4.Eta()),pwgt), 'extramueta', pcats,pfix)
 
                 for irp,rpside in [(0,'pos'),(1,'neg')]:
-                    fillHisto(val=(len(rptks[irp]),wgt), key=('ntk',cat+'_'+rpside))
-                    for csi in rptks[irp]:
-                        fillHisto(val=(csi,wgt), key=('csi',cat+'_'+rpside))
+                    ht.fill((len(protons[irp]),pwgt), 'ntk',    pcats,rpside+pfix)
+                if not pp: continue        
+                ht.fill((pp.M(),pwgt),             'mpp',       pcats,pfix)
+                ht.fill((abs(pp.Rapidity()),pwgt), 'ypp',       pcats,pfix)
+                ht.fill((mmass,pwgt),              'mmass',     pcats,pfix)
+                for irp,rpside in [(0,'pos'),(1,'neg')]:
+                    ht.fill((len(protons[irp]),pwgt), 'ntk',    pcats,rpside+pfix)
+                    for csi in protons[irp]:
+                        ht.fill((csi,pwgt), 'csi',             pcats,rpside+pfix)
 
-                    fillHisto(val=(len(mixed_rptks[irp]),wgt), key=('ntk',cat+'_mix'+rpside))
-                    for csi in mixed_rptks[irp]:
-                        fillHisto(val=(csi,wgt), key=('csi',cat+'_mix'+rpside))
+        #select events
+        if goldenSel:
+            nVarsMissed=len(summaryVars)-len(goldenSel)
+            if nVarsMissed>0: goldenSel += [0.]*nVarsMissed
+
+            if isSignal:
+                                
+                #add a copy for ee
+                eeGoldenSel=copy.copy(goldenSel)
+                eeGoldenSel[0]=11*11
+                eeGoldenSel[1]=goldenSel[1]*mcEff['ee'].Eval(boson.Pt())/nEntries
+                selEvents.append(eeGoldenSel)
+                
+                #add a copy for mm
+                mmGoldenSel=copy.copy(goldenSel)
+                mmGoldenSel[0]=13*13
+                mmGoldenSel[1]=goldenSel[1]*mcEff['mm'].Eval(boson.Pt())/nEntries
+                selEvents.append(mmGoldenSel)
+
+            else:
+
+                selEvents.append(goldenSel)
+            
+
+    #dump events for the mixing
+    nSelRPData=sum([len(rpData[x]) for x in rpData])
+    if nSelRPData>0:
+        rpDataOut=outFileName.replace('.root','.pck')        
+        print 'Saving',nSelRPData,'events for mixing in',rpDataOut
+        with open(rpDataOut,'w') as cachefile:
+            pickle.dump(rpData,cachefile, pickle.HIGHEST_PROTOCOL)        
+
+        #at this point no need to save anything else
+        return
 
     #save results
-    fOut=ROOT.TFile.Open(outFileName,'RECREATE')
-    fOut.cd()
-    for name in histos:
-        for cat in histos[name]:
-            if histos[name][cat].GetEntries()==0 : 
-                histos[name][cat].Delete()
-                continue
-            histos[name][cat].SetDirectory(fOut)
-            histos[name][cat].Write()
-    fOut.Close()
+    ht.writeToFile(outFileName)
 
+    #dump events for fitting
+    nSelEvents=len(selEvents)
+    if nSelEvents>0:
+        print 'Adding',nSelEvents,'selected events to',outFileName
+        fOut=ROOT.TFile.Open(outFileName,'UPDATE')
+        fOut.cd()
+        t=ROOT.TNtuple('data','data',':'.join(summaryVars))
+        for v in selEvents : t.Fill(array.array("f",v))
+        t.Write()
+        fOut.Close()
  
 def runExclusiveAnalysisPacked(args):
 
@@ -259,15 +454,17 @@ def runAnalysisTasks(opt):
     """create analysis tasks"""
 
     #read samples to process
-    task_dict={}
+    task_dict={}    
     with open(opt.json,'r') as cachefile:
         samples=json.load(cachefile,  encoding='utf-8', object_pairs_hook=OrderedDict).items()
         for x in samples:
-            if opt.only and not opt.only in x[0]: continue
             task_dict[x[0]]=[]
 
     #group chunks matching the same name
     for file_path in os.listdir(opt.input):
+        
+        if opt.only and file_path!=os.path.basename(opt.only): continue
+
         file_name,ext=os.path.splitext(file_path)
         if ext != '.root' : continue
 
@@ -282,34 +479,20 @@ def runAnalysisTasks(opt):
         runLumi=json.load(cachefile,  encoding='utf-8', object_pairs_hook=OrderedDict).items()
         runLumi={int(x[0]):x[1] for x in runLumi}
 
-    #prepare event mixing 
-    if opt.step==0:
-        dataPerEra={}
-        for x in task_dict.keys():
-            if 'MC' in x : continue
-            if not 'MuonEG' in x : continue
-            era=x.split('_')[1]
-            if not era in dataPerEra: dataPerEra[era]=[]
-            dataPerEra[era]+=task_dict[x]
-        createEventMixBank(dataPerEra,opt.output,runLumi)
+    #create the tasks and submit them
+    import multiprocessing as MP
+    pool = MP.Pool(opt.jobs)
+    task_list=[]
+    for x in task_dict.keys():
+        
+        isData = True if 'Data' in x else False
+        if opt.step==0 and not isData : continue
+        runLumiList=runLumi if isData else None
+        for f in task_dict[x]:
+            fOut='%s/Chunks/%s'%(opt.output,os.path.basename(f))
+            task_list.append( (f,fOut,runLumiList,opt.mix) )
 
-    #run the analysis
-    elif opt.step==1:
-
-        import multiprocessing as MP
-        pool = MP.Pool(opt.jobs)
-        task_list=[]
-        for x in task_dict.keys():
-            runLumiList=None
-            mixSel=None
-            if 'Data' in x: 
-                runLumiList=runLumi        
-                mixSel=x.split('_')[1]
-            for f in task_dict[x]:
-                fOut='%s/Chunks/%s'%(opt.output,os.path.basename(f))
-                task_list.append( (f,fOut,runLumiList,opt.mix,mixSel) )
-
-        pool.map(runExclusiveAnalysisPacked,task_list)
+    pool.map(runExclusiveAnalysisPacked,task_list)
 
 
 def main():
@@ -333,7 +516,7 @@ def main():
                       dest='only', 
                       default=None,
                       type='string',
-                      help='only this process')
+                      help='only this file')
     parser.add_option('--RPout',
                       dest='RPout', 
                       default='golden_noRP.json',
@@ -346,7 +529,7 @@ def main():
                       help='analysis step: 0 - prepare event mixing bank; 1 - analysis')
     parser.add_option('--mix',
                       dest='mix',
-                      default='analysis/evmix.pck',
+                      default=None,
                       type='string',
                       help='bank of events to use for the mixing')
     parser.add_option('-o', '--output',

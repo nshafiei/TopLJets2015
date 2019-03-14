@@ -10,6 +10,7 @@ SelectionTool::SelectionTool(TString dataset_,bool debug,TH1 *triggerList, Analy
   dataset(dataset_),
   debug_(debug),
   anType_(anType),
+  isZeroBiasPD_(dataset.Contains("ZeroBias")), 
   isSingleElectronPD_(dataset.Contains("SingleElectron")), 
   isSingleMuonPD_(dataset.Contains("SingleMuon")), 
   isDoubleEGPD_(dataset.Contains("DoubleEG")), 
@@ -453,44 +454,22 @@ std::vector<Jet> SelectionTool::getGoodJets(MiniEvent_t &ev, double minPt, doubl
     //jet kinematic selection
     if(jp4.Pt() < minPt || abs(jp4.Eta()) > maxEta) continue;
 
-    //ECAL noise cleaning 
-    //if(ev.isData && dataset.Contains("2017")){
-    // if(dataset.Contains("2017")){
-    //   if(abs(jp4.Eta()) > 2.7 && abs(jp4.Eta()) < 3.0)
-    // 	if(jp4.Pt() < 60) continue;
-    // }
-    // if(dataset.Contains("2017")){
-    //   if(abs(jp4.Eta()) > 2.7 && abs(jp4.Eta()) < 3.0)
-    // 	if(ev.j_emf[k] > 0.5) continue;
-    // }
-
     //flavor based on b tagging
     int flavor = 0;
-    if (ev.j_btag[k]) {
-      flavor = 5;
-    }
+    if (ev.j_btag[k]) flavor = 5;
     
     Jet jet(jp4, flavor, k);
     jet.setCSV(ev.j_csv[k]);
     jet.setDeepCSV(ev.j_deepcsv[k]);
     jet.setPUMVA(ev.j_pumva[k]);
 
-    //fill jet constituents
-    for (int p = 0; p < ev.npf; p++) {
-      if (ev.pf_j[p] == k) {
-        TLorentzVector pp4;
-        pp4.SetPtEtaPhiM(ev.pf_pt[p],ev.pf_eta[p],ev.pf_phi[p],ev.pf_m[p]);
-        jet.addParticle(Particle(pp4, ev.pf_c[p], ev.pf_id[p], 0, p, ev.pf_puppiWgt[p]));
-        if (ev.pf_c[p] != 0) jet.addTrack(pp4, ev.pf_id[p]);
-      }
-    }
-
     //jes/jer uncertainty
     int jflav(abs(ev.j_flav[k]));
     float jecUp(0),jecDn(0);   
     jecUp=pow(1-ev.j_jerUp[k],2);
     jecDn=pow(1-ev.j_jerDn[k],2);
-    for(int iunc=0; iunc<30; iunc++){
+   
+    for(int iunc=0; iunc<29; iunc++){
            
       //see python/miniAnalyzer_cfi.py for these
       if(iunc==6 && jflav!=21) continue; //FlavorPureGluon
@@ -500,6 +479,7 @@ std::vector<Jet> SelectionTool::getGoodJets(MiniEvent_t &ev, double minPt, doubl
       
       if(ev.j_jecUp[iunc][k]!=0) jecUp += pow(1-ev.j_jecUp[iunc][k],2);
       if(ev.j_jecDn[iunc][k]!=0) jecDn += pow(1-ev.j_jecDn[iunc][k],2);
+
     }
     
     jecUp=TMath::Sqrt(jecUp);
@@ -717,20 +697,7 @@ std::vector<Jet> SelectionTool::getGenJets(MiniEvent_t &ev, double minPt, double
 
     //flavor
     int flavor = ev.g_id[i];
-      
     Jet jet(jp4, flavor, i);
-      
-    //fill jet constituents
-    for (int p = 0; p < ev.ngpf; p++) {
-
-      if (ev.gpf_g[p] == i) {
-	TLorentzVector pp4;
-	pp4.SetPtEtaPhiM(ev.gpf_pt[p],ev.gpf_eta[p],ev.gpf_phi[p],ev.gpf_m[p]);
-	jet.addParticle(Particle(pp4, ev.gpf_c[p], ev.gpf_id[p], 0, p, 1.));
-	if (ev.gpf_c[p] != 0) jet.addTrack(pp4, ev.gpf_id[p]);
-      }
-    }
-
     jets.push_back(jet);
   }
   

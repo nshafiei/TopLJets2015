@@ -1,8 +1,10 @@
 #include <iostream>
 
 #include "TopLJets2015/TopAnalysis/interface/CommonTools.h"
-#include "TopLJets2015/TopAnalysis/interface/ExclusiveTop.h"
+#include "TopLJets2015/TopAnalysis/interface/ExclusiveZX.h"
+#include "TopLJets2015/TopAnalysis/interface/TOP-17-010.h"
 #include "TopLJets2015/TopAnalysis/interface/VBFVectorBoson.h"
+#include "TopLJets2015/TopAnalysis/interface/PhotonTrigEff.h"
 
 #include "TH1F.h"
 #include "TFile.h"
@@ -37,7 +39,7 @@ int main(int argc, char* argv[])
   std::string systVar("");
   bool runSysts(false);
   bool debug(false), skimtree(false), CR(false), QCDTemp(false), SRfake(false);
-  int channel(0),charge(0),flag(0);
+  int channel(0),charge(0),flag(-1);
   float xsec(1.0);
   for(int i=1;i<argc;i++){
     string arg(argv[i]);
@@ -95,17 +97,26 @@ int main(int argc, char* argv[])
     }
 
   //check method to run
-  if(method=="ExclusiveTop::RunExclusiveTop")          RunExclusiveTop(in,out,channel,charge,normH,puH,era,debug);
+  if(method=="ExclusiveZX::RunExclusiveZX") {
+    RunExclusiveZX(in,out,channel,charge,normH,puH,era,debug);
+  }
+  else if(method=="PhotonTrigEff::RunPhotonTrigEff") {
+    RunPhotonTrigEff(in,out,normH,puH,era,debug);
+  }
   else if(method=="VBFVectorBoson::RunVBFVectorBoson") {
     VBFVectorBoson myVBF(in,out,normH,puH,era,xsec,debug,CR,QCDTemp,SRfake,skimtree,true);
     myVBF.runAnalysis();
   }
+  else if(method=="TOP17010::TOP17010") {
+    TOP17010 myTOP17010(in,out,normH,puH,era,flag,debug);
+    myTOP17010.runAnalysis();
+  }
   else {
-      cout << "Check method=" << method <<endl;
-      printHelp();
-      return -1;
-    }
-
+    cout << "Check method=" << method <<endl;
+    printHelp();
+    return -1;
+  }
+  
   //all done
   return 0;
 }  

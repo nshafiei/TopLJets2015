@@ -45,6 +45,9 @@ void BTagSFUtil::updateBTagDecisions(MiniEvent_t &ev,std::string optionbc, std::
       expEff    = expBtagEff_[hadFlav]->Eval(jptForBtag); 
       jetBtagSF = btvCalibReaders_[hadFlav]->eval_auto_bounds( option, hadFlav, jetaForBtag, jptForBtag);
       
+      //up-weight further with MC2MC correction if available
+      if(mc2mcCorr_.find(hadFlav)!=mc2mcCorr_.end()) jetBtagSF /= mc2mcCorr_[hadFlav]->Eval(jptForBtag);
+
       //updated b-tagging decision with the data/MC scale factor
       modifyBTagsWithSF(isBTagged, jetBtagSF, expEff);
       ev.j_btag[k] = isBTagged;
@@ -96,6 +99,7 @@ void BTagSFUtil::startBTVcalibrationReaders(TString era,BTagEntry::OperatingPoin
 {
   //start the btag calibration
   TString btagUncUrl( era+"/DeepCSV_94XSF_V3_B_F.csv");
+  if(era.Contains("2016")) btagUncUrl=era+"/DeepCSV_2016LegacySF_V1.csv";
   gSystem->ExpandPathName(btagUncUrl);
   BTagCalibration btvcalib("DeepCSV",btagUncUrl.Data());
 

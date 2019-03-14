@@ -46,7 +46,7 @@ void LumiTools::parseLumiInfo()
 void LumiTools::defineRunPeriods()
 {
   runPeriods_.clear();
-  if(era_.Contains("era2017"))
+  if(era_.Contains("era2017") || era_.Contains("2016"))
     {
       runPeriods_.push_back(std::pair<TString,float> ("",1.0));
     }
@@ -126,6 +126,7 @@ void LumiTools::parsePileupWeightsMap(TH1 *genPU)
 //
 std::vector<Float_t> LumiTools::pileupWeight(Float_t genPu,TString period)
 {
+  using namespace std;
   std::vector<Float_t> toReturn(3,1.0);
   if(puWgtGr_.find(period)==puWgtGr_.end()) return toReturn;
   for(size_t i=0; i<3; i++)
@@ -134,8 +135,8 @@ std::vector<Float_t> LumiTools::pileupWeight(Float_t genPu,TString period)
       float minPu( h->GetXaxis()->GetXmin() ), maxPu( h->GetXaxis()->GetXmax()-0.01 );
       float puForEval=TMath::Max(TMath::Min(genPu,maxPu),minPu);
       toReturn[i]=h->GetBinContent(puForEval);
-
       //toReturn[i]=puWgtGr_[period][i]->Eval(genPu);
     }
+
   return toReturn;
 }

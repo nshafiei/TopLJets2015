@@ -90,9 +90,11 @@ def main():
                 try:
                     myfile = open(t, 'r') # or "a+", whatever you need
                 except IOError:
-                    print "Could not open file! Please close Excel!"
+                    print "Could not open json file",t
                 jsonFile = open(t,'r')
                 samplesList = json.load(jsonFile, encoding='utf-8', object_pairs_hook=OrderedDict).items()
+                print "--------------------->>>>."
+                print samplesList
                 for s,desc in samplesList: 
                     onlyList.append(s)
                     onlyListXsec[s]=desc[0]
@@ -100,6 +102,7 @@ def main():
             else:
                 onlyList.append(t)
         print onlyListXsec
+        print onlyList
     except:
         pass
     skipList=[]
@@ -132,11 +135,12 @@ def main():
     #prepare output if a directory
     if not '.root' in opt.output :
         print opt.output
-        if not '/store/' in opt.output:
-            os.system('mkdir -p %s/Chunks'%opt.output)
-        else:
+        if '/store/' in opt.output:
             os.system('eos mkdir %s'%opt.output)
-            os.system('eos mkdir %s/Chunks'%opt.output)
+            os.system('eos mkdir %s/Chunks'%opt.output)            
+        else:
+            os.system('mkdir -p %s/Chunks'%opt.output)
+
     #correct location of corrections to be used using cmsswBase, if needed
     cmsswBase=os.environ['CMSSW_BASE']
     if not cmsswBase in opt.era : opt.era=cmsswBase+'/src/TopLJets2015/TopAnalysis/data/'+opt.era
@@ -216,12 +220,13 @@ def main():
         print 'Preparing %d tasks to submit to the batch'%len(task_list)
         print 'Executables and condor wrapper are stored in %s'%FarmDirectory
 
+        allCfgs=[]
         with open ('%s/condor.sub'%FarmDirectory,'w') as condor:
 
             condor.write('executable = {0}/$(cfgFile).sh\n'.format(FarmDirectory))
             condor.write('output     = {0}/output_$(cfgFile).out\n'.format(FarmDirectory))
             condor.write('error      = {0}/output_$(cfgFile).err\n'.format(FarmDirectory))
-            condor.write('log        = {0}/output_$(cfgFile).log\n'.format(FarmDirectory))
+            condor.write('log        = {0}/output_common.log\n'.format(FarmDirectory))
             condor.write('+JobFlavour = "{0}"\n'.format(opt.queue))
 
             jobNb=0
@@ -229,7 +234,7 @@ def main():
 
                 jobNb+=1
                 cfgFile='%s'%(os.path.splitext(os.path.basename(outF))[0])
-
+                allCfgs.append((inF,outF))
                 condor.write('cfgFile=%s\n'%cfgFile)
                 condor.write('queue 1\n')
                 
@@ -252,7 +257,7 @@ def main():
                     if SRfake :  runOpts += ' --SRfake'
                     cfg.write('python %s/src/TopLJets2015/TopAnalysis/scripts/runLocalAnalysis.py %s\n'%(cmsswBase,runOpts))
                     if '/store' in outF:
-                        cfg.write('xrdcp --force ${WORKDIR}/%s root://eoscms//eos/cms/%s\n'%(localOutF,outF))
+                        cfg.write('xrdcp --force ${WORKDIR}/%s root://eoscms//%s\n'%(localOutF,outF))
                         cfg.write('rm ${WORKDIR}/%s'%localOutF)
                     elif outF!=localOutF:
                         cfg.write('  mv -v ${WORKDIR}/%s %s\n'%(localOutF,outF))
@@ -262,6 +267,11 @@ def main():
         print 'Submitting jobs to condor, flavour "%s"'%(opt.queue)
         os.system('condor_submit %s/condor.sub'%FarmDirectory)
         
+        with open('%s/checkIntegList.dat'%FarmDirectory,'w') as f:
+            for i,o in allCfgs: 
+                f.write('%s %s\n'%(i,o))
+            
+
 
 """
 for execution from another script

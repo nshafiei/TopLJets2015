@@ -14,6 +14,7 @@
 
 #include "TopLJets2015/TopAnalysis/interface/MiniEvent.h"
 #include "TopLJets2015/TopAnalysis/interface/CommonTools.h"
+#include "TopLJets2015/TopAnalysis/interface/JECTools.h"
 #include "TopLJets2015/TopAnalysis/interface/VBFVectorBoson.h"
 #include "TopLJets2015/TopAnalysis/interface/EfficiencyScaleFactorsWrapper.h"
 #include "TopLJets2015/TopAnalysis/interface/L1PrefireEfficiencyWrapper.h"
@@ -50,7 +51,8 @@ class VBFVectorBoson{
    : filename_(filename), outname_(outname), normH_(normH), genPU_(genPU), era_(era), 
     debug_(debug), CR_(CR), QCDTemp_(QCDTemp), SRfake_(SRfake), skimtree_(skimtree), 
     runSysts_(runSysts), doBlindAnalysis_(blind),
-    xsec_(xsec)
+    xsec_(xsec),
+    jerTool_(era)
   {
     fMVATree_ = NULL;
     newTree_ = NULL;
@@ -90,25 +92,18 @@ class VBFVectorBoson{
 
     leadJetPt_    = 50.;
     subLeadJetPt_ = 50.;
-    jetPuId_      = 0;
+    jetPuId_      = 2;
     cleanEENoise_ = true;
 
     lowVPtCut_        = 75.;
     lowVPtDetaJJCut_  = 3.0;
     lowVPtMaxRapCut_  = 1.4442;
-    
-    if (era_.Contains("2017"))
-      {
-	lowVPtPhotonTrigs_.push_back("HLT_Photon75_R9Id90_HE10_IsoM_EBOnly_PFJetsMJJ300DEta3_v");}
-    else {
-      lowVPtPhotonTrigs_.push_back("HLT_Photon75_R9Id90_HE10_Iso40_EBOnly_VBF");}
-
+    if (era_.Contains("2017")) lowVPtPhotonTrigs_.push_back("HLT_Photon75_R9Id90_HE10_IsoM_EBOnly_PFJetsMJJ300DEta3_v");
+    else                       lowVPtPhotonTrigs_.push_back("HLT_Photon75_R9Id90_HE10_Iso40_EBOnly_VBF");
     highVPtCut_       = 200.;
-    
-    if (era_.Contains("2017")){
-      highVPtPhotonTrigs_.push_back("HLT_Photon200_v");}
-    else {
-      highVPtPhotonTrigs_.push_back("HLT_Photon175_v");}
+    if (era_.Contains("2017")) highVPtPhotonTrigs_.push_back("HLT_Photon200_v");
+    else                       highVPtPhotonTrigs_.push_back("HLT_Photon175_v");
+
     lowMJJCut_  = 500.;
     highMJJCut_ = 1000.;        
 
@@ -178,7 +173,7 @@ private:
 
   //Variables to be added to the MVA Tree and additional variables
   vbf::DiscriminatorInputs vbfVars_;
-  float vbfmva_;
+  float vbfmva_,flat_vbfmva_;
   float evtWeight_;
   float sihih_,chiso_,r9_,hoe_,mindrl_,mindrj_;
   int training_;
@@ -201,6 +196,7 @@ private:
   //categorizer and tree reader
   vbf::Category category_;  
   SelectionTool *selector_;
+  JECTools jerTool_;
 };
 
 #endif

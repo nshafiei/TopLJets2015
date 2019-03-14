@@ -26,6 +26,8 @@ def main():
     parser.add_option('-O', '--outDir',      dest='outDir' ,     help='output directory',                default=None,              type='string')
     parser.add_option('-o', '--outName',     dest='outName' ,    help='name of the output file',        default='plotter.root',    type='string')
     parser.add_option(      '--noStack',     dest='noStack',     help='don\'t stack distributions',     default=False,             action='store_true')
+    parser.add_option(      '--normToData',  dest='normToData',  help='normalize to data yields',       default=False,             action='store_true')
+    parser.add_option(      '--binWid',      dest='binWid',      help='divide by bin width',            default=False,             action='store_true')
     parser.add_option(      '--saveLog',     dest='saveLog' ,    help='save log versions of the plots', default=False,             action='store_true')
     parser.add_option(      '--silent',      dest='silent' ,     help='only dump to ROOT file',         default=False,             action='store_true')
     parser.add_option(      '--ratioRange',  dest='ratioRange' , help='ratio range',                    default="0.4,1.6",         type='string')
@@ -35,6 +37,7 @@ def main():
     parser.add_option('-l', '--lumi',        dest='lumi' ,       help='lumi to print out, if == 1 draw normalized',              default=12900,              type=float)
     parser.add_option(      '--lumiSpecs',   dest='lumiSpecs',   help='lumi specifications for some channels [tag:lumi,tag2:lumi2,...]', default=None,       type=str)
     parser.add_option(      '--only',        dest='only',        help='plot only these (csv)',          default='',                type='string')
+    parser.add_option(      '--strictOnly',  dest='strictOnly',  help='strict matching for only plots', default=False, action='store_true')
     parser.add_option(      '--skip',        dest='skip',        help='skip these samples (csv)',          default='MC13TeV_TTJets_cflip',                type='string')
     parser.add_option(      '--puNormSF',    dest='puNormSF',    help='Use this histogram to correct pu weight normalization', default=None, type='string')
     parser.add_option(      '--procSF',      dest='procSF',      help='Use this to scale a given process component e.g. "W":.wjetscalefactors.pck,"DY":dyscalefactors.pck', default=None, type='string')
@@ -49,7 +52,7 @@ def main():
         jsonFile = open(jsonPath,'r')
         samplesList += json.load(jsonFile, encoding='utf-8', object_pairs_hook=OrderedDict).items()
         jsonFile.close()
-    
+
     #read lists of syst samples
     systSamplesList=[]
     if opt.systJson:
@@ -86,11 +89,18 @@ def main():
         procList=opt.procSF.split(',')
         for newProc in procList:
             proc,cacheUrl=newProc.split(':')
-            if not os.path.isfile(cacheUrl) : continue
-            cache=open(cacheUrl,'r')
-            procSF[proc]=pickle.load(cache)
-            cache.close()
-            print 'Scale factors added for',proc
+            if os.path.isfile(cacheUrl) : 
+                cache=open(cacheUrl,'r')
+                procSF[proc]=pickle.load(cache)
+                cache.close()
+                print 'Scale factors added for',proc
+            else:
+                try:
+                    procSF[proc]={'':(float(cacheUrl),0)}
+                    print 'Scale factors added for',proc
+                except:
+                    pass
+
 
     onlyList=opt.only.split(',')
 
@@ -100,7 +110,8 @@ def main():
     report=''
     for slist,isSignal,isSyst in [ (samplesList,False,False),(signalSamplesList,True,False),(systSamplesList,False,True) ]:
         if slist is None: continue
-        for tag,sample in slist: 
+        for tag,sample in slist:
+            print "tag: %s, sample: %s" %(tag,sample)
             if isSyst and not 't#bar{t}' in sample[3] : continue
             if tag in skipList:
               print("SKIPPED "+tag)
@@ -114,7 +125,7 @@ def main():
                 for flav in [(1,sample[3]+'+l'),(4,sample[3]+'+c'),(5,sample[3]+'+b',sample[4])]:
                     subProcs.append(('%d_%s'%(flav[0],tag),flav[1],sample[4]+3*len(subProcs)))
             for sp in subProcs:
-
+                print '%s/%s.root' % ( opt.inDir, sp[0]) 
                 fIn=ROOT.TFile.Open('%s/%s.root' % ( opt.inDir, sp[0]) )
                 if not fIn : continue
 
@@ -142,10 +153,11 @@ def main():
 
                         #filter plots using a selection list
                         keep=False if len(onlyList)>0 else True
-                        for pname in onlyList: 
-                            if pname in key: 
-                                keep=True
-                                break
+                        for pname in onlyList:
+                            if opt.strictOnly and pname!=key: continue
+                            if not opt.strictOnly and not pname in key: continue
+                            keep=True
+                            break
                         if not keep: continue
                         histos = []
                         obj=fIn.Get(key)
@@ -160,8 +172,7 @@ def main():
                                                 obj.SetBinContent(xbin, ybin, 0)
                                                 obj.SetBinError(xbin, ybin, 0)
                                         weighthist = obj.ProjectionX('_px'+str(ybin), ybin, ybin)
-                                        weighthist.SetTitle(sp[1]+' weight '+str(ybin))
-                                        fixExtremities(weighthist, False, False)
+                                        weighthist.SetTitle(sp[1]+' weight '+str(ybin))                                  
                                         weighthist.Draw()
                                         if (weighthist.Integral() > 0): histos.append(weighthist)
                                 else:
@@ -170,15 +181,19 @@ def main():
                                 histos.append(obj)
                                 histos[-1].SetTitle(sp[1])
                         else:
-                            fixExtremities(obj, False, False)
                             histos.append(obj)
                             histos[-1].SetTitle(sp[1])
 
                         for hist in histos:
+                            if "vbfmvaOrig" in hist.GetName() and isData:
+                                tmpBin = hist.GetXaxis().FindBin(0.2)
+                                for iBin in range(tmpBin,hist.GetXaxis().GetNbins()):
+                                    hist.SetBinContent(iBin, 0.0000001)
+                                
                             if not isData and not '(data)' in sp[1]: 
 
                                 #check if a special scale factor needs to be applied
-                                sfVal=1.0                            
+                                sfVal=1.0                                                 
                                 for procToScale in procSF:
                                     if sp[1]==procToScale:
                                         for pcat in procSF[procToScale]:                                    
@@ -194,7 +209,6 @@ def main():
                                     break
                                 if not opt.rawYields:
                                     hist.Scale(xsec*lumi*puNormSF*sfVal)                    
-                            
                             #rebin if needed
                             if opt.rebin>1:  hist.Rebin(opt.rebin)
 
@@ -204,7 +218,13 @@ def main():
                                 plots[key].ratiorange=opt.ratioRange
 
                             #add process to plot
-                            plots[key].add(h=hist,title=hist.GetTitle(),color=sp[2],isData=sample[1],spImpose=isSignal,isSyst=(isSyst or keyIsSyst))
+                            plots[key].add(h=hist,
+                                           title=hist.GetTitle(),
+                                           color=sp[2],
+                                           isData=sample[1],
+                                           spImpose=isSignal,
+                                           isSyst=(isSyst or keyIsSyst),
+                                           doDivideByBinWidth=opt.binWid)
                             
                     except Exception as e:
                         print e
@@ -231,6 +251,7 @@ def main():
             break
 
         #continue
+        if opt.normToData: plots[p].normToData()
         if not skipPlot: plots[p].show(outDir=outDir,lumi=lumi,noStack=opt.noStack,saveTeX=opt.saveTeX)
         plots[p].appendTo('%s/%s'%(outDir,opt.outName))
         plots[p].reset()

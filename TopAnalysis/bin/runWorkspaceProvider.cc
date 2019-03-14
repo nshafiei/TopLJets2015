@@ -4,11 +4,12 @@ using namespace std;
 
 int main( int argc, char** argv )
 {
-  TString channel, histname, boson;
+  TString channel, histname, boson, year;
   YieldsErr YE;
   double sigEff =1;
   double bkgEff =1;
   int nBin = 4;
+  bool shapeOnly = false;
   bool doSignalPH = false;
   for (int i=1; i<argc; i++) {
     TString input(argv[i]);
@@ -43,17 +44,26 @@ int main( int argc, char** argv )
     } else if (input=="--doSignalPH"){
       doSignalPH = true;
       continue;
+    } else if (input=="--year"){
+      i++;
+      year = TString(argv[i]);
+      continue;
+    } else if (input=="--shapeOnly"){
+      i++;
+      shapeOnly = true;
+      continue;
     }
   }
 
-
-  VbfFitRegion * SR = new VbfFitRegion(channel, TString("A"), histname, nBin, true);
-  VbfFitRegion * CR = new VbfFitRegion(channel, TString("MM"), histname, nBin, false);
+  if(false) cout << doSignalPH << "\t"<<sigEff << "\t" <<bkgEff<<endl;
+  VbfFitRegion * SR = new VbfFitRegion(channel, TString("A"), histname, year, nBin, true, shapeOnly);
+  VbfFitRegion * CR = new VbfFitRegion(channel, TString("MM"), histname, year,nBin, false, shapeOnly);
   
   WorkspaceProvider wsp(histname,SR, CR);
-  wsp.import(doSignalPH);
-  wsp.makeCard(YE, TString("A"), doSignalPH, sigEff, bkgEff);
-  wsp.makeCard(YE, TString("MM"), doSignalPH, sigEff, bkgEff);
+  // wsp.import(doSignalPH);
+  // wsp.makeCard(YE, TString("A"), doSignalPH, sigEff, bkgEff);
+  // wsp.makeCard(YE, TString("MM"), doSignalPH, sigEff, bkgEff);
   wsp.makeCardNLO(YE, TString("A"));
+  wsp.plotSystSig();
   return 0;
 }
