@@ -113,7 +113,6 @@ case $WHAT in
         fi
         echo ${json}
 	python scripts/runLocalAnalysis.py \
-
 	    -i ${eosdir} --only SinglePhoton \
             -o ${outdir}/${githash}/${EXTRA} \
             --farmappendix ${githash} \
